@@ -57,6 +57,7 @@
 // Thumb bit sudah di-strip dari nilai nm (nilai ganjil → +1 saat hook)
 #define OFFSET_SCREEN_GET_WIDTH   0x268d3cUL
 #define OFFSET_SCREEN_GET_HEIGHT  0x268d4cUL
+#define OFFSET_EMU_GLVIEWPORT      0x001bb7b4UL
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
 
@@ -84,6 +85,7 @@ static int  g_orig_height  = 0;
 // Pointer ke fungsi original (diisi Dobby saat hook)
 static int (*orig_ScreenGetWidth)(void)  = nullptr;
 static int (*orig_ScreenGetHeight)(void) = nullptr;
+static void (*orig_emuGlViewport)(int,int,int,int) = nullptr;
 
 // ─── Dapatkan base address libGTASA.so dari /proc/self/maps ─────────────────
 
@@ -159,6 +161,14 @@ static int hook_ScreenGetHeight(void) {
 }
 
 // ─── API internal ────────────────────────────────────────────────────────────
+
+static void hook_emuGlViewport(int x, int y, int width, int height) {
+    if (g_enabled && width > height) {
+        orig_emuGlViewport(x, y, height, width);
+        return;
+    }
+    orig_emuGlViewport(x, y, width, height);
+}
 
 static void  _enable(void)     { g_enabled = 1; logf_write("[PORTRAIT] ENABLED"); }
 static void  _disable(void)    { g_enabled = 0; logf_write("[PORTRAIT] DISABLED"); }
@@ -264,6 +274,20 @@ EXPORT void OnModLoad() {
     logf_write("[PORTRAIT] Hook OS_ScreenGetHeight OK");
 
     // 7. Aktifkan portrait otomatis saat load
+    // Hook emu_glViewport
+    void* addr_viewport = (void*)(base + OFFSET_EMU_GLVIEWPORT + 1);
+    logff("[PORTRAIT] emu_glViewport → %p", addr_viewport);
+    ret = dobbyHook(
+        addr_viewport,
+        (void*)hook_emuGlViewport,
+        (void**)&orig_emuGlViewport
+    );
+    if (ret != 0) {
+        logff("[PORTRAIT] ERROR: hook emu_glViewport gagal (ret=%d)", ret);
+        return;
+    }
+    logf_write("[PORTRAIT] Hook emu_glViewport OK");
+
     _enable();
 
     logf_write("[PORTRAIT] ==============================");

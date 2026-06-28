@@ -45,6 +45,7 @@
 #include <stdarg.h>
 #include <dlfcn.h>
 #include <android/log.h>
+#include <jni.h>
 #include <stdlib.h>
 
 // ─── Macro ───────────────────────────────────────────────────────────────────
@@ -298,6 +299,78 @@ EXPORT void OnModLoad() {
         return;
     }
     logf_write("[PORTRAIT] Hook glViewport OK");
+
+    // Force portrait via JNI setRequestedOrientation
+    logf_write("[PORTRAIT] Force portrait via JNI...");
+    do {
+        JNIEnv* env = nullptr;
+        JavaVM* jvm = nullptr;
+
+        // Cari JavaVM dari libdvm/libart
+        void* hArt = dlopen("libart.so", RTLD_NOW | RTLD_NOLOAD);
+        if (!hArt) hArt = dlopen("libdvm.so", RTLD_NOW | RTLD_NOLOAD);
+        if (!hArt) { logf_write("[PORTRAIT] WARN: libart/libdvm tidak ditemukan"); break; }
+
+        auto getCreatedJVMs = (jint(*)(JavaVM**, jsize, jsize*))
+            dlsym(hArt, "JNI_GetCreatedJavaVMs");
+        if (!getCreatedJVMs) { logf_write("[PORTRAIT] WARN: JNI_GetCreatedJavaVMs tidak ada"); break; }
+
+        jsize count = 0;
+        if (getCreatedJVMs(&jvm, 1, &count) != JNI_OK || count == 0 || !jvm) {
+            logf_write("[PORTRAIT] WARN: JavaVM tidak ditemukan"); break;
+        }
+
+        jint res = jvm->GetEnv((void**)&env, JNI_VERSION_1_6);
+        if (res == JNI_EDETACHED) {
+            jvm->AttachCurrentThread(&env, nullptr);
+        }
+        if (!env) { logf_write("[PORTRAIT] WARN: JNIEnv null"); break; }
+
+        // Cari Activity via ActivityThread
+        jclass actThread = env->FindClass("android/app/ActivityThread");
+        if (!actThread) { logf_write("[PORTRAIT] WARN: ActivityThread tidak ditemukan"); break; }
+
+        jmethodID curApp = env->GetStaticMethodID(actThread,
+            "currentActivityThread", "()Landroid/app/ActivityThread;");
+        jobject thread = env->CallStaticObjectMethod(actThread, curApp);
+
+        jmethodID getAct = env->GetMethodID(actThread,
+            "getApplication", "()Landroid/app/Application;");
+        jobject app = env->CallObjectMethod(thread, getAct);
+
+        // setRequestedOrientation(1) = SCREEN_ORIENTATION_PORTRAIT
+        jclass actClass = env->FindClass("android/app/Activity");
+        jmethodID setOrientation = env->GetMethodID(actClass,
+            "setRequestedOrientation", "(I)V");
+
+        // Ambil Activity dari ActivityThread
+        jmethodID getActivity = env->GetMethodID(actThread,
+            "getApplication", "()Landroid/app/Application;");
+
+        // Coba via foreground activity
+        jclass atClass = env->FindClass("android/app/ActivityThread");
+        jmethodID getForeground = env->GetStaticMethodID(atClass,
+            "currentActivityThread", "()Landroid/app/ActivityThread;");
+        jobject at = env->CallStaticObjectMethod(atClass, getForeground);
+
+        jfieldID activitiesField = env->GetFieldID(atClass,
+            "mCurrentActivityThread", "Landroid/app/ActivityThread;");
+
+        // Gunakan app sebagai context, call via reflection
+        jclass ctxClass = env->FindClass("android/content/Context");
+        (void)ctxClass;
+
+        // Langsung call pada application context sebagai Activity jika bisa
+        if (app && setOrientation) {
+            env->CallVoidMethod(app, setOrientation, 1);
+            if (!env->ExceptionCheck()) {
+                logf_write("[PORTRAIT] JNI setRequestedOrientation(PORTRAIT) OK");
+            } else {
+                env->ExceptionClear();
+                logf_write("[PORTRAIT] WARN: setOrientation exception (bukan Activity)");
+            }
+        }
+    } while(0);
 
     _enable();
 

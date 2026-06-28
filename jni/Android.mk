@@ -21,6 +21,7 @@ LOCAL_CPPFLAGS := \
 
 LOCAL_LDLIBS := \
     -llog \
+    -lpthread \
     -lm \
     -ldl
 

@@ -46,6 +46,8 @@
 #include <dlfcn.h>
 #include <android/log.h>
 #include <jni.h>
+#include <pthread.h>
+#include <unistd.h>
 #include <stdlib.h>
 
 // ─── Macro ───────────────────────────────────────────────────────────────────
@@ -185,6 +187,69 @@ struct PortraitAPI {
 };
 
 // ─── Entry points AML ────────────────────────────────────────────────────────
+
+
+// Thread untuk set portrait orientation
+static void* portrait_thread(void* arg) {
+    usleep(500000); // tunggu 0.5 detik agar Activity siap
+
+    void* hAML = dlopen("libAML.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!hAML) { logf_write("[PORTRAIT] thread: libAML null"); return nullptr; }
+
+    auto GetJNIEnv = (JNIEnv*(*)())dlsym(hAML, "_ZN3AML17GetJNIEnvironmentEv");
+    if (!GetJNIEnv) { logf_write("[PORTRAIT] thread: GetJNIEnv null"); return nullptr; }
+
+    JNIEnv* env = GetJNIEnv();
+    if (!env) { logf_write("[PORTRAIT] thread: env null"); return nullptr; }
+
+    // Attach thread ke JVM
+    JavaVM* jvm = nullptr;
+    env->GetJavaVM(&jvm);
+    if (!jvm) { logf_write("[PORTRAIT] thread: jvm null"); return nullptr; }
+
+    JNIEnv* tenv = nullptr;
+    jvm->AttachCurrentThread(&tenv, nullptr);
+    if (!tenv) { logf_write("[PORTRAIT] thread: AttachCurrentThread null"); return nullptr; }
+    logf_write("[PORTRAIT] thread: JNIEnv attached");
+
+    // Ambil Activity via ActivityThread
+    jclass atClass = tenv->FindClass("android/app/ActivityThread");
+    if (!atClass) { logf_write("[PORTRAIT] thread: ActivityThread null"); jvm->DetachCurrentThread(); return nullptr; }
+
+    jmethodID getCurrent = tenv->GetStaticMethodID(atClass,
+        "currentActivityThread", "()Landroid/app/ActivityThread;");
+    jobject at = tenv->CallStaticObjectMethod(atClass, getCurrent);
+    if (!at) { logf_write("[PORTRAIT] thread: at null"); jvm->DetachCurrentThread(); return nullptr; }
+
+    jmethodID getActivity = tenv->GetMethodID(atClass,
+        "currentActivity", "()Landroid/app/Activity;");
+    if (!getActivity) {
+        tenv->ExceptionClear();
+        logf_write("[PORTRAIT] thread: currentActivity method null, coba getApplication");
+        getActivity = tenv->GetMethodID(atClass, "getApplication",
+            "()Landroid/app/Application;");
+    }
+    if (!getActivity) { logf_write("[PORTRAIT] thread: no activity method"); jvm->DetachCurrentThread(); return nullptr; }
+
+    jobject activity = tenv->CallObjectMethod(at, getActivity);
+    if (!activity) { logf_write("[PORTRAIT] thread: activity null"); jvm->DetachCurrentThread(); return nullptr; }
+    if (tenv->ExceptionCheck()) { tenv->ExceptionClear(); logf_write("[PORTRAIT] thread: exception getting activity"); jvm->DetachCurrentThread(); return nullptr; }
+
+    jclass actClass = tenv->FindClass("android/app/Activity");
+    jmethodID setOri = tenv->GetMethodID(actClass, "setRequestedOrientation", "(I)V");
+    if (!setOri) { logf_write("[PORTRAIT] thread: setRequestedOrientation null"); jvm->DetachCurrentThread(); return nullptr; }
+
+    tenv->CallVoidMethod(activity, setOri, 1); // 1 = PORTRAIT
+    if (tenv->ExceptionCheck()) {
+        tenv->ExceptionClear();
+        logf_write("[PORTRAIT] thread: setRequestedOrientation exception");
+    } else {
+        logf_write("[PORTRAIT] thread: setRequestedOrientation(PORTRAIT) OK!");
+    }
+
+    jvm->DetachCurrentThread();
+    return nullptr;
+}
 
 extern "C" {
 

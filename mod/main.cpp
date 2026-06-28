@@ -164,6 +164,7 @@ static int hook_ScreenGetHeight(void) {
 
 static void hook_emuGlViewport(int x, int y, int width, int height) {
     if (g_enabled && width > height) {
+        logff("[PORTRAIT] glViewport swap: %dx%d -> %dx%d", width, height, height, width);
         orig_emuGlViewport(x, y, height, width);
         return;
     }
@@ -274,19 +275,29 @@ EXPORT void OnModLoad() {
     logf_write("[PORTRAIT] Hook OS_ScreenGetHeight OK");
 
     // 7. Aktifkan portrait otomatis saat load
-    // Hook emu_glViewport
-    void* addr_viewport = (void*)(base + OFFSET_EMU_GLVIEWPORT + 1);
-    logff("[PORTRAIT] emu_glViewport → %p", addr_viewport);
+    // Hook glViewport dari libGLESv2
+    logf_write("[PORTRAIT] Load libGLESv2...");
+    void* hGLES = dlopen("libGLESv2.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!hGLES) {
+        logff("[PORTRAIT] ERROR: libGLESv2: %s", dlerror());
+        return;
+    }
+    void* addr_viewport = dlsym(hGLES, "glViewport");
+    if (!addr_viewport) {
+        logff("[PORTRAIT] ERROR: glViewport sym: %s", dlerror());
+        return;
+    }
+    logff("[PORTRAIT] glViewport → %p", addr_viewport);
     ret = dobbyHook(
         addr_viewport,
         (void*)hook_emuGlViewport,
         (void**)&orig_emuGlViewport
     );
     if (ret != 0) {
-        logff("[PORTRAIT] ERROR: hook emu_glViewport gagal (ret=%d)", ret);
+        logff("[PORTRAIT] ERROR: hook glViewport gagal (ret=%d)", ret);
         return;
     }
-    logf_write("[PORTRAIT] Hook emu_glViewport OK");
+    logf_write("[PORTRAIT] Hook glViewport OK");
 
     _enable();
 

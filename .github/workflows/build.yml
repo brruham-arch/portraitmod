@@ -47,7 +47,7 @@ jobs:
           strings libs/armeabi-v7a/libportraitmod.so | grep -E "PORTRAIT|brruham|portrait"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: libportraitmod
           path: libs/armeabi-v7a/libportraitmod.so
